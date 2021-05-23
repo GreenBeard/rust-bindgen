@@ -50,6 +50,15 @@ pub trait ParseCallbacks: fmt::Debug + UnwindSafe {
     /// the expansion of the macro as a sequence of tokens.
     fn func_macro(&self, _name: &str, _value: &[&[u8]]) {}
 
+    /// This will be run on every function-like macro. The callback cannot
+    /// influence the further treatment of the macro, but may use the value to
+    /// generate additional code or configuration.
+    ///
+    /// The first parameter represents the name of the object-like macro. The
+    /// second parameter represents the expansion of the macro as a sequence of
+    /// tokens.
+    fn object_macro(&self, _name: &str, _value: &[&[u8]]) {}
+
     /// This function should return whether, given an enum variant
     /// name, and value, this enum variant will forcibly be a constant.
     fn enum_variant_behavior(

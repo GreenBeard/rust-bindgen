@@ -149,31 +149,17 @@ fn default_macro_constant_type(ctx: &BindgenContext, value: i64) -> IntKind {
     }
 }
 
-/// Determines whether a set of tokens from a CXCursor_MacroDefinition
-/// represent a function-like macro. If so, calls the func_macro callback
-/// and returns `Err(ParseError::Continue)` to signal to skip further
-/// processing. If conversion to UTF-8 fails (it is performed only where it
-/// should be infallible), then `Err(ParseError::Continue)` is returned as well.
-fn handle_function_macro(
-    cursor: &clang::Cursor,
+enum HelperCallback {
+  Func,
+  Object,
+}
+
+fn handle_function_macro_helper(
     tokens: &[ClangToken],
+    boundary: Option<usize>,
+    callback_type: HelperCallback,
     callbacks: &dyn crate::callbacks::ParseCallbacks,
 ) -> Result<(), ParseError> {
-    // TODO: Hoist the `is_macro_function_like` check into this function's
-    // caller, and thus avoid allocating the `tokens` vector for non-functional
-    // macros.
-    let is_functional_macro = cursor.is_macro_function_like();
-
-    if !is_functional_macro {
-        return Ok(());
-    }
-
-    let is_closing_paren = |t: &ClangToken| {
-        // Test cheap token kind before comparing exact spellings.
-        t.kind == clang_sys::CXToken_Punctuation && t.spelling() == b")"
-    };
-    let boundary = tokens.iter().position(is_closing_paren);
-
     let mut spelled = tokens.iter().map(ClangToken::spelling);
     // Add 1, to convert index to length.
     let left = spelled
@@ -191,10 +177,53 @@ fn handle_function_macro(
         (len, _) => len,
     };
     let right: Vec<_> = right.take(len).collect();
-    callbacks.func_macro(&left, &right);
+    match callback_type {
+        HelperCallback::Func => {
+            callbacks.func_macro(&left, &right);
+        },
+        HelperCallback::Object => {
+            callbacks.object_macro(&left, &right);
+        },
+    }
 
     // We handled the macro, skip future macro processing.
     Err(ParseError::Continue)
+}
+
+/// Determines whether a set of tokens from a CXCursor_MacroDefinition
+/// represent a function-like macro. If so, calls the func_macro callback
+/// and returns `Err(ParseError::Continue)` to signal to skip further
+/// processing. If conversion to UTF-8 fails (it is performed only where it
+/// should be infallible), then `Err(ParseError::Continue)` is returned as well.
+fn handle_function_macro(
+    cursor: &clang::Cursor,
+    tokens: &[ClangToken],
+    callbacks: &dyn crate::callbacks::ParseCallbacks,
+) -> Result<(), ParseError> {
+    // TODO: Hoist the `is_macro_function_like` check into this function's
+    // caller, and thus avoid allocating the `tokens` vector for non-functional
+    // macros.
+    let is_functional_macro = cursor.is_macro_function_like();
+
+    if is_functional_macro {
+        let is_closing_paren = |t: &ClangToken| {
+            // Test cheap token kind before comparing exact spellings.
+            t.kind == clang_sys::CXToken_Punctuation && t.spelling() == b")"
+        };
+        let boundary = tokens.iter().position(is_closing_paren);
+        return handle_function_macro_helper(
+            tokens, boundary, HelperCallback::Func, callbacks,
+        );
+    } else {
+        /* I fail to see how this wouldn't always be the case, but better safe
+          than sorry for calling back to user code. */
+        if tokens.len() >= 1 {
+            let _ = handle_function_macro_helper(
+                tokens, Some(0), HelperCallback::Object, callbacks,
+            );
+        }
+        return Ok(());
+    }
 }
 
 impl ClangSubItemParser for Var {
